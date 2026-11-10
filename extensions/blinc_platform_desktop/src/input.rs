@@ -165,7 +165,9 @@ pub fn convert_keyboard_event(
         key: convert_key(key),
         state: convert_key_state(state),
         modifiers: convert_modifiers(modifiers),
-        text: text.map(str::to_owned),
+        // winit gives no text for dead keys, modifiers and chords; that is
+        // "no text", never a cue to guess one from the key.
+        text: Some(text.unwrap_or_default().to_owned()),
     })
 }
 
