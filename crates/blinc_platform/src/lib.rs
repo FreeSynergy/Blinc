@@ -82,3 +82,22 @@ pub mod prelude {
         AnimationFps, AnimationThreadMode, Cursor, Window, WindowConfig, WindowId, WindowLevel,
     };
 }
+
+/// Temporary probe timing.
+pub mod probe_timing {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    static T0: AtomicU64 = AtomicU64::new(0);
+    fn now() -> u64 { EPOCH.get_or_init(Instant::now).elapsed().as_micros() as u64 + 1 }
+    pub fn key() { if std::env::var_os("BLINC_KEYTIME").is_some() { let n=now(); T0.store(n, Ordering::SeqCst); eprintln!("KEYTIME key t={n}"); } }
+    pub fn present() {
+        let t = T0.swap(0, Ordering::SeqCst);
+        if std::env::var_os("BLINC_KEYTIME").is_some() { let n=now(); eprintln!("KEYTIME present t={n} since_key_us={}", if t!=0 {n-t} else {0}); }
+    }
+    pub fn stage(name: &str) {
+        let t = T0.load(Ordering::SeqCst);
+        if t != 0 { eprintln!("KEYTIME   {name} at_us={}", now() - t); }
+    }
+}

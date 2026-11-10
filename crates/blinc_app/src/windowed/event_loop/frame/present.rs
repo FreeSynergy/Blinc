@@ -384,6 +384,7 @@ pub(super) fn render_and_schedule(
         gate.arm_before_present();
     }
     frame.present();
+    blinc_platform::probe_timing::present();
     // Wayland keep-alive self-drive: request the next frame
     // so the swapchain keeps cycling while the scene is
     // static. `pre_present_notify` (called above) armed the

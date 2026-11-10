@@ -452,6 +452,7 @@ where
             }
 
             WinitWindowEvent::KeyboardInput { event, .. } => {
+                if event.state == winit::event::ElementState::Pressed { blinc_platform::probe_timing::key(); }
                 let input_event = input::convert_keyboard_event(
                     &event.logical_key,
                     event.state,
