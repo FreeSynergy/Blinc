@@ -563,7 +563,7 @@ where
                                     key: blinc_platform::Key::Char(c),
                                     state: blinc_platform::KeyState::Pressed,
                                     modifiers: blinc_platform::Modifiers::default(),
-                                    text: None,
+                                    text: Some(c.to_string()),
                                 },
                             );
                             self.handle_event_for(winit_id, Event::Input(wid, input_event));
