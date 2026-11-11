@@ -1227,7 +1227,10 @@ fn unregister_disposed(
 fn remove_retired(
     registries: &mut HashMap<u64, PropertyBindingRegistry>,
 ) -> Vec<PropertyBindingRegistry> {
-    for disposed in std::mem::take(&mut *DISPOSED_LATER.lock().unwrap()) {
+    // Taken first: unregistering drops closures, and a drop can end up in the notifier, which
+    // locks this list.
+    let later = std::mem::take(&mut *DISPOSED_LATER.lock().unwrap());
+    for disposed in later {
         unregister_disposed(registries, disposed);
     }
     crate::tree::scope::take_retired()
@@ -3021,5 +3024,45 @@ mod tests {
                 "a constant registered a binding"
             );
         }
+    }
+
+    /// A writer that holds the last handle of some field data is dropped while the disposals
+    /// that arrived during a registry access are applied; releasing the data's signals then
+    /// must neither wait for the registry nor for the list of those disposals.
+    #[test]
+    fn dropping_a_writer_that_holds_field_data_while_applying_late_disposals_does_not_hang() {
+        let _guard = lock_and_reset();
+        let (done, wait) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let data = Arc::new(Mutex::new(crate::widgets::text_input::TextInputData::new()));
+            let revision = data.lock().unwrap().revision.unwrap();
+            let state = State::new(
+                blinc_core::reactive::signal(0i32),
+                blinc_core::reactive::global_graph(),
+                blinc_core::reactive::global_dirty_flag(),
+            );
+            let mut tree = crate::tree::LayoutTree::new();
+            let node_id = mint_node(&mut tree);
+            let held = Arc::clone(&data);
+            register_typed(
+                state.signal_id(),
+                node_id,
+                PropertyId::Opacity,
+                state.clone(),
+                move |_props, _v: i32| {
+                    let _ = &held;
+                },
+            );
+            drop(data);
+            // The registry is busy, so the notifier can only queue the disposal.
+            with_registry(|_| blinc_core::reactive::dispose_signal(state.signal_id()));
+            // The next access applies it and drops the writer, and with it the data.
+            with_registry(|_| {});
+            blinc_core::owner::dispose_pending();
+            assert!(revision.try_get().is_none());
+            let _ = done.send(());
+        });
+        wait.recv_timeout(std::time::Duration::from_secs(10))
+            .expect("applying late disposals hung");
     }
 }
