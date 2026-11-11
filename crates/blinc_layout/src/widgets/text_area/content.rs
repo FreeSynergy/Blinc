@@ -76,7 +76,7 @@ pub(super) fn selection_span(d: &TextAreaState, row: usize) -> (f32, f32) {
 /// `disabled` as an attribute bound to the state's revision, and the
 /// `.blinc-input` rules do the rest.
 pub(super) fn assemble(mut outer: Div, state: &SharedTextAreaState, base: &TextAreaConfig) -> Div {
-    use blinc_core::reactive::{ReactiveGraph, computed, signal};
+    use blinc_core::reactive::{ReactiveGraph, computed};
 
     let revision = {
         let mut d = state.lock().unwrap();
@@ -84,7 +84,8 @@ pub(super) fn assemble(mut outer: Div, state: &SharedTextAreaState, base: &TextA
         let cfg = resolved_config(base, &d);
         take_metrics(&mut d, &cfg);
         d.compute_visual_lines();
-        *d.revision.get_or_insert_with(|| signal(0u64))
+        let signals = d.signals.clone();
+        *d.revision.get_or_insert_with(|| signals.signal(0u64))
     };
 
     let disabled = {

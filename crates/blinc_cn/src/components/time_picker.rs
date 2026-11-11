@@ -402,8 +402,9 @@ fn segment(c: &Config, part: Segment) -> (Div, Reactive<bool>) {
     });
     let edit = c.clone();
     let step = c.clone();
-    let stepped = data.clone();
-    let submit = data.clone();
+    // These callbacks are stored in the field's own data: hold it weakly.
+    let stepped = std::sync::Arc::downgrade(&data);
+    let submit = std::sync::Arc::downgrade(&data);
     let canonical = c.clone();
     let input = text_input(&data)
         .w(width)
@@ -435,9 +436,15 @@ fn segment(c: &Config, part: Segment) -> (Div, Reactive<bool>) {
                 return;
             }
             part.step(&step, delta);
-            show(&stepped, part.get(&step, step.value.get()));
+            if let Some(data) = stepped.upgrade() {
+                show(&data, part.get(&step, step.value.get()));
+            }
         })
-        .on_submit(move |_| show(&submit, part.get(&canonical, canonical.value.get())));
+        .on_submit(move |_| {
+            if let Some(data) = submit.upgrade() {
+                show(&data, part.get(&canonical, canonical.value.get()));
+            }
+        });
     let blur_sync = data.clone();
     let config = c.clone();
     let focus = text_input_focused(&data).into_reactive();

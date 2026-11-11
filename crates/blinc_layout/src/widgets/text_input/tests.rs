@@ -305,6 +305,81 @@ fn a_bound_placeholder_and_invalid_follow_their_signals() {
     assert!(d.invalid);
 }
 
+/// A field's signals belong to its data: the build that created the data can be disposed and
+/// the field still follows its value; they go when the data does.
+#[test]
+fn the_signals_of_the_data_outlive_the_build_that_made_them() {
+    let mut gone = Vec::new();
+    for _ in 0..1000 {
+        let build = blinc_core::owner::Owner::new();
+        let data = build.run(|| {
+            let data = Arc::new(Mutex::new(TextInputData::new()));
+            let _ = text_input_focused(&data);
+            data
+        });
+        build.dispose();
+        let (revision, focus) = {
+            let d = data.lock().unwrap();
+            (d.revision.unwrap(), d.focus_signal.unwrap())
+        };
+        assert!(revision.try_get().is_some(), "revision went with the build");
+        assert!(focus.try_get().is_some(), "focus went with the build");
+        drop(data);
+        gone.push((revision, focus));
+    }
+    blinc_core::owner::dispose_pending();
+    assert!(
+        gone.iter()
+            .all(|(r, f)| r.try_get().is_none() && f.try_get().is_none()),
+        "a signal outlived its data"
+    );
+}
+
+/// An effect or computed that holds the last handle of the data is dropped when the build is
+/// disposed, with the graph locked; releasing the data's signals then must not lock it again.
+#[test]
+fn disposing_a_build_whose_effect_holds_the_data_does_not_hang() {
+    let (done, wait) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let build = blinc_core::owner::Owner::new();
+        let revision = build.run(|| {
+            let data = Arc::new(Mutex::new(TextInputData::new()));
+            let revision = data.lock().unwrap().revision.unwrap();
+            let held = Arc::clone(&data);
+            let _ = blinc_core::reactive::effect(move |_| {
+                let _ = held.lock().map(|d| d.value.len());
+            });
+            let held = Arc::clone(&data);
+            let _ = blinc_core::reactive::computed(move |_| {
+                held.lock().map(|d| d.value.len()).unwrap_or(0)
+            });
+            revision
+        });
+        build.dispose();
+        assert!(revision.try_get().is_none());
+        let _ = done.send(());
+    });
+    wait.recv_timeout(std::time::Duration::from_secs(10))
+        .expect("disposing a build hung");
+}
+
+/// The last handle of the data falls while this thread holds the binding registry: telling the
+/// registry about the disposed signals must not wait for it.
+#[test]
+fn dropping_the_data_while_the_registry_is_held_does_not_hang() {
+    let (done, wait) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let data = Arc::new(Mutex::new(TextInputData::new()));
+        let revision = data.lock().unwrap().revision.unwrap();
+        crate::binding::with_registry(|_| drop(data));
+        blinc_core::owner::dispose_pending();
+        assert!(revision.try_get().is_none());
+        let _ = done.send(());
+    });
+    wait.recv_timeout(std::time::Duration::from_secs(10))
+        .expect("dropping the data hung");
+}
+
 /// The caret and the click-to-caret mapping use the letter spacing the text is drawn
 /// with, taken from the field's CSS like the font size is.
 #[test]

@@ -42,8 +42,8 @@ impl TextArea {
         };
         // A field with a revision is one a deferred focus can land on.
         if let Ok(mut d) = state.lock() {
-            d.revision
-                .get_or_insert_with(|| blinc_core::reactive::signal(0u64));
+            let signals = d.signals.clone();
+            d.revision.get_or_insert_with(|| signals.signal(0u64));
             d.config = Some(Arc::clone(&config));
         }
 

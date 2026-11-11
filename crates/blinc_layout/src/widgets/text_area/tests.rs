@@ -104,3 +104,24 @@ fn lines_caret_and_hit_test_follow_css_letter_spacing() {
     state.compute_visual_lines();
     assert!(state.visual_lines.len() > 1);
 }
+
+/// The state's signal belongs to the state: the build that created it can be disposed and the
+/// field still follows its value; it goes when the state does.
+#[test]
+fn the_signal_of_the_state_outlives_the_build_that_made_it() {
+    let mut gone = Vec::new();
+    for _ in 0..1000 {
+        let build = blinc_core::owner::Owner::new();
+        let state = build.run(text_area_state);
+        build.dispose();
+        let revision = state.lock().unwrap().revision.unwrap();
+        assert!(revision.try_get().is_some(), "revision went with the build");
+        drop(state);
+        gone.push(revision);
+    }
+    blinc_core::owner::dispose_pending();
+    assert!(
+        gone.iter().all(|r| r.try_get().is_none()),
+        "a signal outlived its state"
+    );
+}

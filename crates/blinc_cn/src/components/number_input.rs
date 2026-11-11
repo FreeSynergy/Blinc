@@ -345,7 +345,8 @@ fn number_field(
         let state = config.state;
         let (min, max, step) = (config.min, config.max, config.step);
         let on_change = config.on_change.clone();
-        let data = data.clone();
+        // The callback is stored in the field's own data: hold it weakly.
+        let data = Arc::downgrade(data);
         field = field.on_step(move |delta| {
             let current = state.try_get().unwrap_or(0.0);
             let next = clamp(current + delta as f64 * step, min, max);
@@ -354,7 +355,9 @@ fn number_field(
             }
             // Before the write: the field shows the value even though it
             // is focused.
-            if let Ok(mut d) = data.lock() {
+            if let Some(data) = data.upgrade()
+                && let Ok(mut d) = data.lock()
+            {
                 d.force_sync_once = true;
             }
             state.set(next);
@@ -372,7 +375,7 @@ fn number_field(
     {
         let state = config.state;
         let (min, max, precision) = (config.min, config.max, config.precision);
-        let data = data.clone();
+        let data = Arc::downgrade(data);
         let on_change = config.on_change.clone();
         field = field.on_change(move |text| {
             let trimmed = text.trim();
@@ -391,7 +394,9 @@ fn number_field(
                 }
             }
             // A clamped value goes back into the field in its canonical form.
-            if (clamped - parsed).abs() > f64::EPSILON {
+            if (clamped - parsed).abs() > f64::EPSILON
+                && let Some(data) = data.upgrade()
+            {
                 if let Ok(mut d) = data.lock() {
                     d.value = format_number(clamped, precision);
                     d.cursor = d.value.chars().count();

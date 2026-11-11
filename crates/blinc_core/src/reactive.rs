@@ -2246,6 +2246,31 @@ pub fn dispose_signal(id: SignalId) {
     dispose(Disposed::Signal(id));
 }
 
+/// Dispose signals now if the graph lock is free; false, with nothing done, when it is held
+/// (including by this thread) or a write is in flight. For a caller that may run while a closure
+/// the graph is disposing or replacing is being dropped.
+pub(crate) fn try_dispose_signals(ids: &[SignalId]) -> bool {
+    if is_in_flush() {
+        return false;
+    }
+    let removed: Vec<SignalId> = {
+        let graph = global_graph();
+        let Ok(mut g) = graph.try_lock() else {
+            return false;
+        };
+        ids.iter()
+            .copied()
+            .filter(|id| g.dispose_signal(*id))
+            .collect()
+    };
+    if let Some(notifier) = DISPOSE_NOTIFIER.get() {
+        for id in removed {
+            notifier(Disposed::Signal(id));
+        }
+    }
+    true
+}
+
 /// Remove a derived from the global graph, together with its property
 /// bindings. Deferred inside an effect or a computation, as
 /// [`dispose_signal`] is.

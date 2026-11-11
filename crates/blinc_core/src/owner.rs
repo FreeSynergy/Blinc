@@ -123,6 +123,8 @@ impl Owner {
         for signal in owned.signals {
             dispose_signal(signal);
         }
+        // Closures dropped above may have held the last handle of some data.
+        dispose_pending();
         self.0.borrow_mut().disposed = true;
     }
 
@@ -161,6 +163,7 @@ impl BuildScope {
     /// Start a build: a new scope is current until the pass is handed back or dropped. The pass is
     /// a root scope, not a child of whatever is current.
     pub fn begin(&mut self) -> BuildPass {
+        dispose_pending();
         let owner = Owner::default();
         let enter = owner.enter();
         BuildPass { owner, enter }
@@ -200,6 +203,60 @@ impl Drop for BuildScope {
     }
 }
 
+/// Signals that belong to a value, not to the build that happens to create it. They are made
+/// outside any scope and disposed when the last clone of the value that holds this is dropped.
+#[derive(Clone, Default, Debug)]
+pub struct DataSignals(std::sync::Arc<DataSignalIds>);
+
+#[derive(Default, Debug)]
+struct DataSignalIds(std::sync::Mutex<Vec<SignalId>>);
+
+impl DataSignals {
+    pub fn signal<T: Send + 'static>(&self, initial: T) -> crate::reactive::Signal<T> {
+        let signal = Owner::detached(|| crate::reactive::signal(initial));
+        self.0.0.lock().unwrap().push(signal.id());
+        signal
+    }
+}
+
+/// Signals of dropped data that could not be disposed at once because the graph was locked, as
+/// when the drop was caused by the graph replacing or removing a value.
+static PENDING: std::sync::Mutex<Vec<SignalId>> = std::sync::Mutex::new(Vec::new());
+static HAS_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Dispose the signals of data dropped while the graph was locked. Run where a build starts or a
+/// scope is disposed, with no graph or binding lock held; does nothing when none are waiting.
+pub fn dispose_pending() {
+    use std::sync::atomic::Ordering;
+    if !HAS_PENDING.swap(false, Ordering::AcqRel) {
+        return;
+    }
+    let ids = std::mem::take(&mut *PENDING.lock().unwrap_or_else(|p| p.into_inner()));
+    // Called with no graph lock held, so waiting for it is safe here.
+    for id in ids {
+        dispose_signal(id);
+    }
+}
+
+fn release(ids: Vec<SignalId>) {
+    if ids.is_empty() || crate::reactive::try_dispose_signals(&ids) {
+        return;
+    }
+    PENDING
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .extend(ids);
+    HAS_PENDING.store(true, std::sync::atomic::Ordering::Release);
+}
+
+impl Drop for DataSignalIds {
+    fn drop(&mut self) {
+        release(std::mem::take(
+            &mut *self.0.lock().unwrap_or_else(|p| p.into_inner()),
+        ));
+    }
+}
+
 fn with_current(f: impl FnOnce(&mut Owned)) {
     CURRENT.with(|stack| {
         if let Some(top) = stack.borrow().last() {
@@ -232,6 +289,32 @@ mod tests {
 
     fn serial() -> std::sync::MutexGuard<'static, ()> {
         LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    #[test]
+    fn data_signals_outlive_the_build_and_go_with_the_data() {
+        let _g = serial();
+        let mut gone = Vec::new();
+        for _ in 0..1000 {
+            let build = Owner::new();
+            let data = DataSignals::default();
+            let made = build.run(|| data.signal(7_i32));
+            let copy = data.clone();
+            build.dispose();
+            assert_eq!(made.try_get(), Some(7), "the signal went with the build");
+            drop(data);
+            assert_eq!(
+                made.try_get(),
+                Some(7),
+                "a clone of the data still holds it"
+            );
+            drop(copy);
+            gone.push(made);
+        }
+        assert!(
+            gone.iter().all(|s| s.try_get().is_none()),
+            "a signal outlived the data that owns it"
+        );
     }
 
     #[test]
