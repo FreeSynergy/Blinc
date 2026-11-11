@@ -200,7 +200,9 @@ where
                     }
 
                     // Update context from window
-                    windowed_ctx.update_from_window(window);
+                    if windowed_ctx.update_from_window(window) {
+                        ws.needs_rebuild = true;
+                    }
 
                     // Update viewport for lazy loading visibility checks
                     // Uses logical pixels (width/height) as that's what layout uses

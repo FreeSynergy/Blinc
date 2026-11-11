@@ -439,15 +439,11 @@ where
             Event::Window(_, WindowEvent::Resized { width, height }) => {
                 // Maximize/fullscreen changes arrive as a resize; refresh the
                 // readable state before the no-op guard below.
-                if let Some(windowed_ctx) = ws.ctx.as_mut() {
-                    let status = window.status();
-                    if windowed_ctx.window_status.maximized != status.maximized
-                        || windowed_ctx.window_status.fullscreen != status.fullscreen
-                    {
-                        ws.needs_rebuild = true;
-                        frame_dirty.store(true, Ordering::Release);
-                    }
-                    windowed_ctx.window_status = status;
+                if let Some(windowed_ctx) = ws.ctx.as_mut()
+                    && windowed_ctx.window_status.replace(window.status())
+                {
+                    ws.needs_rebuild = true;
+                    frame_dirty.store(true, Ordering::Release);
                 }
                 if let (Some(blinc_app), Some(surf), Some(config)) =
                     (&mut ws.app, &ws.surface, &mut ws.surface_config)

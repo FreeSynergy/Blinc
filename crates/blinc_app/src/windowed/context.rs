@@ -213,7 +213,7 @@ impl WindowedContext {
             physical_width,
             physical_height,
             focused,
-            window_status: Self::basic_status(
+            window_status: blinc_platform::WindowStatus::from_physical(
                 physical_width,
                 physical_height,
                 scale_factor,
@@ -277,7 +277,7 @@ impl WindowedContext {
             physical_width,
             physical_height,
             focused,
-            window_status: Self::basic_status(
+            window_status: blinc_platform::WindowStatus::from_physical(
                 physical_width,
                 physical_height,
                 scale_factor,
@@ -350,7 +350,7 @@ impl WindowedContext {
             physical_width,
             physical_height,
             focused,
-            window_status: Self::basic_status(
+            window_status: blinc_platform::WindowStatus::from_physical(
                 physical_width,
                 physical_height,
                 scale_factor,
@@ -411,7 +411,7 @@ impl WindowedContext {
             physical_width: (width * scale_factor as f32).round().max(1.0),
             physical_height: (height * scale_factor as f32).round().max(1.0),
             focused: true,
-            window_status: Self::basic_status(
+            window_status: blinc_platform::WindowStatus::from_physical(
                 (width * scale_factor as f32).round().max(1.0),
                 (height * scale_factor as f32).round().max(1.0),
                 scale_factor,
@@ -473,7 +473,7 @@ impl WindowedContext {
             physical_width,
             physical_height,
             focused,
-            window_status: Self::basic_status(
+            window_status: blinc_platform::WindowStatus::from_physical(
                 physical_width,
                 physical_height,
                 scale_factor,
@@ -507,39 +507,24 @@ impl WindowedContext {
         }
     }
 
-    /// Update context from window (preserving event router, dirty flag, and reactive graph)
-    pub(super) fn update_from_window<W: Window>(&mut self, window: &W) {
-        let (physical_width, physical_height) = window.size();
-        let scale_factor = window.scale_factor();
+    /// Update context from window (preserving event router, dirty flag, and reactive graph).
+    /// Returns whether `maximized` or `fullscreen` changed.
+    pub(super) fn update_from_window<W: Window>(&mut self, window: &W) -> bool {
+        let status = window.status();
+        let (physical_width, physical_height) = status.inner_size;
+        let scale_factor = status.scale_factor;
 
         self.physical_width = physical_width as f32;
         self.physical_height = physical_height as f32;
         self.width = physical_width as f32 / scale_factor as f32;
         self.height = physical_height as f32 / scale_factor as f32;
         self.scale_factor = scale_factor;
-        self.focused = window.is_focused();
-        self.window_status = window.status();
-    }
-
-    #[allow(dead_code)]
-    fn basic_status(
-        physical_width: f32,
-        physical_height: f32,
-        scale_factor: f64,
-        focused: bool,
-    ) -> blinc_platform::WindowStatus {
-        let size = (physical_width as u32, physical_height as u32);
-        blinc_platform::WindowStatus {
-            inner_size: size,
-            outer_size: size,
-            scale_factor,
-            focused,
-            ..Default::default()
-        }
+        self.focused = status.focused;
+        self.window_status.replace(status)
     }
 
     /// Current window state: maximized, fullscreen, sizes, scale factor,
-    /// focus and (where the platform reports it) position.
+    /// and focus.
     pub fn window_state(&self) -> blinc_platform::WindowStatus {
         self.window_status
     }

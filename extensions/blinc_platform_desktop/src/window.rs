@@ -186,13 +186,22 @@ impl Window for DesktopWindow {
         self.window.fullscreen().is_some()
     }
 
+    fn status(&self) -> blinc_platform::WindowStatus {
+        let inner = self.window.inner_size();
+        let outer = self.window.outer_size();
+        blinc_platform::WindowStatus {
+            inner_size: (inner.width, inner.height),
+            outer_size: (outer.width, outer.height),
+            scale_factor: self.window.scale_factor(),
+            maximized: self.window.is_maximized(),
+            fullscreen: self.window.fullscreen().is_some(),
+            focused: self.focused.load(Ordering::Relaxed),
+        }
+    }
+
     fn outer_size(&self) -> (u32, u32) {
         let size = self.window.outer_size();
         (size.width, size.height)
-    }
-
-    fn outer_position(&self) -> Option<(i32, i32)> {
-        self.window.outer_position().ok().map(|p| (p.x, p.y))
     }
 
     fn set_position(&self, x: i32, y: i32) {

@@ -648,13 +648,8 @@ pub trait Window: Send {
         self.size()
     }
 
-    /// Outer position in physical pixels, if the platform exposes it.
-    /// Always `None` on Wayland.
-    fn outer_position(&self) -> Option<(i32, i32)> {
-        None
-    }
-
-    /// Snapshot of the window state.
+    /// Snapshot of the window state. Implementations should query the
+    /// platform once per field; this is called every frame.
     fn status(&self) -> WindowStatus {
         WindowStatus {
             inner_size: self.size(),
@@ -663,13 +658,15 @@ pub trait Window: Send {
             maximized: self.is_maximized(),
             fullscreen: self.is_fullscreen(),
             focused: self.is_focused(),
-            outer_position: self.outer_position(),
         }
     }
 }
 
 /// Readable window state. Sizes are physical pixels.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+///
+/// Tiled windows (compositor quick-tile) report neither `maximized` nor
+/// `fullscreen`.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WindowStatus {
     /// Content size.
     pub inner_size: (u32, u32),
@@ -683,11 +680,41 @@ pub struct WindowStatus {
     pub fullscreen: bool,
     /// The window has input focus.
     pub focused: bool,
-    /// Outer position; `None` where the platform does not report it.
-    pub outer_position: Option<(i32, i32)>,
+}
+
+impl Default for WindowStatus {
+    fn default() -> Self {
+        Self {
+            inner_size: (0, 0),
+            outer_size: (0, 0),
+            scale_factor: 1.0,
+            maximized: false,
+            fullscreen: false,
+            focused: false,
+        }
+    }
 }
 
 impl WindowStatus {
+    /// State of a window known only by its physical content size.
+    pub fn from_physical(width: f32, height: f32, scale_factor: f64, focused: bool) -> Self {
+        let size = (width as u32, height as u32);
+        Self {
+            inner_size: size,
+            outer_size: size,
+            scale_factor,
+            focused,
+            ..Self::default()
+        }
+    }
+
+    /// Store `new`; returns whether `maximized` or `fullscreen` changed.
+    pub fn replace(&mut self, new: Self) -> bool {
+        let changed = self.maximized != new.maximized || self.fullscreen != new.fullscreen;
+        *self = new;
+        changed
+    }
+
     /// Content size in logical pixels.
     pub fn inner_size_logical(&self) -> (f32, f32) {
         let s = self.scale_factor as f32;
@@ -701,7 +728,9 @@ impl WindowStatus {
     }
 
     /// Content size in logical pixels to store as the restorable "normal"
-    /// size, or `None` while maximized or fullscreen.
+    /// size, or `None` while maximized or fullscreen. It does not remember
+    /// an earlier size: a window that starts maximized yields `None` until
+    /// it is restored, and a tiled window counts as normal.
     pub fn normal_size_logical(&self) -> Option<(f32, f32)> {
         if self.maximized || self.fullscreen {
             None
@@ -757,7 +786,6 @@ mod status_tests {
         assert!(!a.maximized);
         assert_eq!(a.inner_size_logical(), (1000.0, 700.0));
         assert_eq!(a.normal_size_logical(), Some((1000.0, 700.0)));
-        assert_eq!(a.outer_position, None);
 
         w.maximized = true;
         w.size = (2560, 1544);
@@ -765,6 +793,24 @@ mod status_tests {
         assert!(b.maximized);
         assert_eq!(b.normal_size_logical(), None);
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn replace_reports_only_shape_changes() {
+        let mut cur = WindowStatus::default();
+        let mut next = cur;
+        next.inner_size = (10, 10);
+        assert!(!cur.replace(next));
+        next.maximized = true;
+        assert!(cur.replace(next));
+        assert!(!cur.replace(next));
+        next.fullscreen = true;
+        assert!(cur.replace(next));
+    }
+
+    #[test]
+    fn default_scale_is_finite() {
+        assert_eq!(WindowStatus::default().inner_size_logical(), (0.0, 0.0));
     }
 }
 
