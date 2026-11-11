@@ -631,6 +631,141 @@ pub trait Window: Send {
     fn safe_area_insets(&self) -> (f32, f32, f32, f32) {
         (0.0, 0.0, 0.0, 0.0)
     }
+
+    /// Whether the window is maximized.
+    fn is_maximized(&self) -> bool {
+        false
+    }
+
+    /// Whether the window is fullscreen.
+    fn is_fullscreen(&self) -> bool {
+        false
+    }
+
+    /// Outer size (including decorations) in physical pixels.
+    /// Defaults to the inner size.
+    fn outer_size(&self) -> (u32, u32) {
+        self.size()
+    }
+
+    /// Outer position in physical pixels, if the platform exposes it.
+    /// Always `None` on Wayland.
+    fn outer_position(&self) -> Option<(i32, i32)> {
+        None
+    }
+
+    /// Snapshot of the window state.
+    fn status(&self) -> WindowStatus {
+        WindowStatus {
+            inner_size: self.size(),
+            outer_size: self.outer_size(),
+            scale_factor: self.scale_factor(),
+            maximized: self.is_maximized(),
+            fullscreen: self.is_fullscreen(),
+            focused: self.is_focused(),
+            outer_position: self.outer_position(),
+        }
+    }
+}
+
+/// Readable window state. Sizes are physical pixels.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WindowStatus {
+    /// Content size.
+    pub inner_size: (u32, u32),
+    /// Size including decorations.
+    pub outer_size: (u32, u32),
+    /// Physical / logical pixel ratio.
+    pub scale_factor: f64,
+    /// The window is maximized.
+    pub maximized: bool,
+    /// The window is fullscreen.
+    pub fullscreen: bool,
+    /// The window has input focus.
+    pub focused: bool,
+    /// Outer position; `None` where the platform does not report it.
+    pub outer_position: Option<(i32, i32)>,
+}
+
+impl WindowStatus {
+    /// Content size in logical pixels.
+    pub fn inner_size_logical(&self) -> (f32, f32) {
+        let s = self.scale_factor as f32;
+        (self.inner_size.0 as f32 / s, self.inner_size.1 as f32 / s)
+    }
+
+    /// Outer size in logical pixels.
+    pub fn outer_size_logical(&self) -> (f32, f32) {
+        let s = self.scale_factor as f32;
+        (self.outer_size.0 as f32 / s, self.outer_size.1 as f32 / s)
+    }
+
+    /// Content size in logical pixels to store as the restorable "normal"
+    /// size, or `None` while maximized or fullscreen.
+    pub fn normal_size_logical(&self) -> Option<(f32, f32)> {
+        if self.maximized || self.fullscreen {
+            None
+        } else {
+            Some(self.inner_size_logical())
+        }
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    struct Mock {
+        size: (u32, u32),
+        maximized: bool,
+    }
+
+    impl Window for Mock {
+        fn id(&self) -> WindowId {
+            WindowId(1)
+        }
+        fn size(&self) -> (u32, u32) {
+            self.size
+        }
+        fn logical_size(&self) -> (f32, f32) {
+            (self.size.0 as f32 / 2.0, self.size.1 as f32 / 2.0)
+        }
+        fn scale_factor(&self) -> f64 {
+            2.0
+        }
+        fn set_title(&self, _: &str) {}
+        fn set_cursor(&self, _: Cursor) {}
+        fn request_redraw(&self) {}
+        fn is_focused(&self) -> bool {
+            true
+        }
+        fn is_visible(&self) -> bool {
+            true
+        }
+        fn is_maximized(&self) -> bool {
+            self.maximized
+        }
+    }
+
+    #[test]
+    fn status_reflects_maximize() {
+        let mut w = Mock {
+            size: (2000, 1400),
+            maximized: false,
+        };
+        let a = w.status();
+        assert!(!a.maximized);
+        assert_eq!(a.inner_size_logical(), (1000.0, 700.0));
+        assert_eq!(a.normal_size_logical(), Some((1000.0, 700.0)));
+        assert_eq!(a.outer_position, None);
+
+        w.maximized = true;
+        w.size = (2560, 1544);
+        let b = w.status();
+        assert!(b.maximized);
+        assert_eq!(b.normal_size_logical(), None);
+        assert_ne!(a, b);
+    }
 }
 
 /// Cursor icons

@@ -287,6 +287,7 @@ where
                                     ctx.physical_width = width as f32;
                                     ctx.physical_height = height as f32;
                                     ctx.scale_factor = sf;
+                                    ctx.window_status = window.status();
                                 }
                             }
                         }

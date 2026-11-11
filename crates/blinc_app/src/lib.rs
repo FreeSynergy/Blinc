@@ -259,7 +259,7 @@ pub use blinc_layout::RenderTree;
 pub use blinc_layout::prelude::*;
 
 // Re-export platform types for windowed applications
-pub use blinc_platform::{AnimationThreadMode, WindowConfig, WindowLevel};
+pub use blinc_platform::{AnimationThreadMode, WindowConfig, WindowLevel, WindowStatus};
 
 // Re-export derive macro
 pub use blinc_macros::BlincComponent;
@@ -288,7 +288,7 @@ pub mod prelude {
     pub use blinc_core::reactive::{Derived, Effect, ReactiveGraph, Signal};
 
     // Platform types
-    pub use blinc_platform::{AnimationThreadMode, WindowConfig, WindowLevel};
+    pub use blinc_platform::{AnimationThreadMode, WindowConfig, WindowLevel, WindowStatus};
 
     // Derive macro for components
     pub use blinc_macros::BlincComponent;

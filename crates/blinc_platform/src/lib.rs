@@ -60,6 +60,7 @@ pub use input::{
 pub use platform::Platform;
 pub use window::{
     AnimationFps, AnimationThreadMode, Cursor, Window, WindowConfig, WindowId, WindowLevel,
+    WindowStatus,
 };
 
 // Re-export commonly used asset types
@@ -80,5 +81,6 @@ pub mod prelude {
     pub use crate::platform::Platform;
     pub use crate::window::{
         AnimationFps, AnimationThreadMode, Cursor, Window, WindowConfig, WindowId, WindowLevel,
+        WindowStatus,
     };
 }

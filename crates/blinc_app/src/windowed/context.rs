@@ -61,6 +61,8 @@ pub struct WindowedContext {
     pub(crate) physical_height: f32,
     /// Whether the window is focused
     pub focused: bool,
+    /// Window state as of the last resize, scale change or frame.
+    pub(crate) window_status: blinc_platform::WindowStatus,
     /// Number of completed UI rebuilds (0 = first build in progress)
     ///
     /// Use `is_ready()` to check if the UI has been built at least once.
@@ -152,6 +154,7 @@ impl WindowedContext {
             physical_width: physical_width as f32,
             physical_height: physical_height as f32,
             focused: window.is_focused(),
+            window_status: window.status(),
             rebuild_count: 0,
             event_router,
             animations,
@@ -210,6 +213,12 @@ impl WindowedContext {
             physical_width,
             physical_height,
             focused,
+            window_status: Self::basic_status(
+                physical_width,
+                physical_height,
+                scale_factor,
+                focused,
+            ),
             rebuild_count: 0,
             event_router: EventRouter::new(),
             animations,
@@ -268,6 +277,12 @@ impl WindowedContext {
             physical_width,
             physical_height,
             focused,
+            window_status: Self::basic_status(
+                physical_width,
+                physical_height,
+                scale_factor,
+                focused,
+            ),
             rebuild_count: 0,
             event_router: EventRouter::new(),
             animations,
@@ -335,6 +350,12 @@ impl WindowedContext {
             physical_width,
             physical_height,
             focused,
+            window_status: Self::basic_status(
+                physical_width,
+                physical_height,
+                scale_factor,
+                focused,
+            ),
             rebuild_count: 0,
             event_router: EventRouter::new(),
             animations,
@@ -390,6 +411,12 @@ impl WindowedContext {
             physical_width: (width * scale_factor as f32).round().max(1.0),
             physical_height: (height * scale_factor as f32).round().max(1.0),
             focused: true,
+            window_status: Self::basic_status(
+                (width * scale_factor as f32).round().max(1.0),
+                (height * scale_factor as f32).round().max(1.0),
+                scale_factor,
+                true,
+            ),
             rebuild_count: 0,
             event_router: EventRouter::new(),
             animations: Arc::new(Mutex::new(AnimationScheduler::new())),
@@ -446,6 +473,12 @@ impl WindowedContext {
             physical_width,
             physical_height,
             focused,
+            window_status: Self::basic_status(
+                physical_width,
+                physical_height,
+                scale_factor,
+                focused,
+            ),
             rebuild_count: 0,
             event_router: EventRouter::new(),
             animations,
@@ -485,5 +518,29 @@ impl WindowedContext {
         self.height = physical_height as f32 / scale_factor as f32;
         self.scale_factor = scale_factor;
         self.focused = window.is_focused();
+        self.window_status = window.status();
+    }
+
+    #[allow(dead_code)]
+    fn basic_status(
+        physical_width: f32,
+        physical_height: f32,
+        scale_factor: f64,
+        focused: bool,
+    ) -> blinc_platform::WindowStatus {
+        let size = (physical_width as u32, physical_height as u32);
+        blinc_platform::WindowStatus {
+            inner_size: size,
+            outer_size: size,
+            scale_factor,
+            focused,
+            ..Default::default()
+        }
+    }
+
+    /// Current window state: maximized, fullscreen, sizes, scale factor,
+    /// focus and (where the platform reports it) position.
+    pub fn window_state(&self) -> blinc_platform::WindowStatus {
+        self.window_status
     }
 }

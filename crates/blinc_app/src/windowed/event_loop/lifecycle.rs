@@ -437,6 +437,18 @@ where
         } = self;
         match event {
             Event::Window(_, WindowEvent::Resized { width, height }) => {
+                // Maximize/fullscreen changes arrive as a resize; refresh the
+                // readable state before the no-op guard below.
+                if let Some(windowed_ctx) = ws.ctx.as_mut() {
+                    let status = window.status();
+                    if windowed_ctx.window_status.maximized != status.maximized
+                        || windowed_ctx.window_status.fullscreen != status.fullscreen
+                    {
+                        ws.needs_rebuild = true;
+                        frame_dirty.store(true, Ordering::Release);
+                    }
+                    windowed_ctx.window_status = status;
+                }
                 if let (Some(blinc_app), Some(surf), Some(config)) =
                     (&mut ws.app, &ws.surface, &mut ws.surface_config)
                 {
@@ -541,6 +553,7 @@ where
                 }
                 if let Some(ref mut windowed_ctx) = ws.ctx {
                     windowed_ctx.scale_factor = scale_factor;
+                    windowed_ctx.window_status = window.status();
                     windowed_ctx.physical_width = phys_w as f32;
                     windowed_ctx.physical_height = phys_h as f32;
                     let logical_width = phys_w as f32 / scale_factor as f32;
@@ -567,6 +580,7 @@ where
                 // Update context focus state
                 if let Some(ref mut windowed_ctx) = ws.ctx {
                     windowed_ctx.focused = focused;
+                    windowed_ctx.window_status.focused = focused;
                     windowed_ctx.event_router.on_window_focus(focused);
 
                     if !focused {

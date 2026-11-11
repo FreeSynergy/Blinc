@@ -178,6 +178,23 @@ impl Window for DesktopWindow {
         self.window.is_visible().unwrap_or(true)
     }
 
+    fn is_maximized(&self) -> bool {
+        self.window.is_maximized()
+    }
+
+    fn is_fullscreen(&self) -> bool {
+        self.window.fullscreen().is_some()
+    }
+
+    fn outer_size(&self) -> (u32, u32) {
+        let size = self.window.outer_size();
+        (size.width, size.height)
+    }
+
+    fn outer_position(&self) -> Option<(i32, i32)> {
+        self.window.outer_position().ok().map(|p| (p.x, p.y))
+    }
+
     fn set_position(&self, x: i32, y: i32) {
         self.window
             .set_outer_position(winit::dpi::LogicalPosition::new(x, y));
