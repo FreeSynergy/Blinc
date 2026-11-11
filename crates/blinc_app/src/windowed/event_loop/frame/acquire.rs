@@ -4,6 +4,7 @@
 //! image it receives: an image that is acquired and neither presented nor returned stays held.
 
 use blinc_platform::ControlFlow;
+use std::time::Duration;
 
 /// Proof that the frame passed the draw decision; `acquire_for_draw` needs one.
 pub(super) struct DrawToken(());
@@ -35,15 +36,27 @@ pub(super) trait Swapchain {
 pub(super) trait FrameSignals {
     /// The next frame has something to draw even if no input arrives.
     fn mark_dirty(&mut self);
-    fn request_redraw(&mut self);
+    /// Wake the loop for a redraw after `delay`.
+    fn redraw_after(&mut self, delay: Duration);
 }
 
+#[derive(Debug)]
 pub(super) enum AcquireError {
     Lost,
     Outdated,
     Timeout,
     OutOfMemory,
-    Other,
+    Other(String),
+}
+
+const RETRY_FIRST: Duration = Duration::from_millis(16);
+const RETRY_MAX: Duration = Duration::from_millis(250);
+
+/// Delay before the retry after `failures` consecutive failed acquires (at least 1).
+fn retry_delay(failures: u32) -> Duration {
+    RETRY_FIRST
+        .saturating_mul(1u32 << (failures - 1).min(8))
+        .min(RETRY_MAX)
 }
 
 pub(super) enum Acquired<I> {
@@ -53,21 +66,31 @@ pub(super) enum Acquired<I> {
     Exit,
 }
 
+/// `failures` counts consecutive failed acquires of the window; a success resets it.
 pub(super) fn acquire_for_draw<S: Swapchain, G: FrameSignals>(
     _decided: DrawToken,
     sc: &mut S,
     signals: &mut G,
+    failures: &mut u32,
 ) -> Acquired<S::Image> {
     match sc.acquire() {
-        Ok(image) => Acquired::Image(image),
+        Ok(image) => {
+            *failures = 0;
+            Acquired::Image(image)
+        }
         Err(AcquireError::OutOfMemory) => Acquired::Exit,
         Err(e) => {
-            if !matches!(e, AcquireError::Other) {
+            *failures = failures.saturating_add(1);
+            // The first failure and every 64th after it, so a persistent error does not flood the log.
+            if *failures % 64 == 1 {
+                tracing::warn!("swapchain acquire failed ({} in a row): {:?}", *failures, e);
+            }
+            if !matches!(e, AcquireError::Other(_)) {
                 sc.reconfigure();
             }
             // The dirty flags of this frame are already consumed.
             signals.mark_dirty();
-            signals.request_redraw();
+            signals.redraw_after(retry_delay(*failures));
             Acquired::Retry
         }
     }
@@ -89,7 +112,7 @@ impl Swapchain for SurfaceSwapchain<'_> {
             wgpu::SurfaceError::Outdated => AcquireError::Outdated,
             wgpu::SurfaceError::Timeout => AcquireError::Timeout,
             wgpu::SurfaceError::OutOfMemory => AcquireError::OutOfMemory,
-            _ => AcquireError::Other,
+            e => AcquireError::Other(e.to_string()),
         })
     }
 
@@ -98,9 +121,9 @@ impl Swapchain for SurfaceSwapchain<'_> {
     }
 }
 
-/// The window's redraw request and the loop's dirty flag.
+/// The loop's dirty flag and wake timer.
 pub(super) struct WindowSignals<'a> {
-    pub window: &'a blinc_platform_desktop::DesktopWindow,
+    pub wake: &'a blinc_platform_desktop::WakeProxy,
     pub dirty: &'a std::sync::atomic::AtomicBool,
 }
 
@@ -109,9 +132,8 @@ impl FrameSignals for WindowSignals<'_> {
         self.dirty.store(true, std::sync::atomic::Ordering::Release);
     }
 
-    fn request_redraw(&mut self) {
-        use blinc_platform::Window;
-        self.window.request_redraw();
+    fn redraw_after(&mut self, delay: Duration) {
+        self.wake.wake_at(delay);
     }
 }
 
@@ -143,24 +165,37 @@ mod tests {
     #[derive(Default)]
     struct Signals {
         dirty: u32,
-        redraws: u32,
+        delays: Vec<Duration>,
     }
 
     impl FrameSignals for Signals {
         fn mark_dirty(&mut self) {
             self.dirty += 1;
         }
-        fn request_redraw(&mut self) {
-            self.redraws += 1;
+        fn redraw_after(&mut self, delay: Duration) {
+            self.delays.push(delay);
         }
     }
 
+    fn token() -> DrawToken {
+        let Decision::Draw(token) = Decision::after_phases(None) else {
+            unreachable!()
+        };
+        token
+    }
+
     /// One frame as the loop runs it: the decision comes first and the only way to an acquire.
-    fn frame(sc: &mut Fake, sig: &mut Signals, skip: Option<ControlFlow>, presented: &mut u32) {
+    fn frame(
+        sc: &mut Fake,
+        sig: &mut Signals,
+        skip: Option<ControlFlow>,
+        failures: &mut u32,
+        presented: &mut u32,
+    ) {
         let Decision::Draw(token) = Decision::after_phases(skip) else {
             return;
         };
-        if let Acquired::Image(_) = acquire_for_draw(token, sc, sig) {
+        if let Acquired::Image(_) = acquire_for_draw(token, sc, sig, failures) {
             *presented += 1;
         }
     }
@@ -172,28 +207,30 @@ mod tests {
             ..Default::default()
         };
         let mut sig = Signals::default();
-        let mut presented = 0;
+        let (mut failures, mut presented) = (0, 0);
         for _ in 0..50 {
             frame(
                 &mut sc,
                 &mut sig,
                 Some(ControlFlow::Continue),
+                &mut failures,
                 &mut presented,
             );
         }
-        frame(&mut sc, &mut sig, None, &mut presented);
+        frame(&mut sc, &mut sig, None, &mut failures, &mut presented);
         for _ in 0..50 {
             frame(
                 &mut sc,
                 &mut sig,
                 Some(ControlFlow::Continue),
+                &mut failures,
                 &mut presented,
             );
         }
-        frame(&mut sc, &mut sig, None, &mut presented);
+        frame(&mut sc, &mut sig, None, &mut failures, &mut presented);
         assert_eq!(sc.acquired, 2);
         assert_eq!(presented, sc.acquired);
-        assert_eq!(sig.redraws, 0);
+        assert!(sig.delays.is_empty());
     }
 
     #[test]
@@ -211,23 +248,46 @@ mod tests {
             (AcquireError::Timeout, 1),
             (AcquireError::Lost, 1),
             (AcquireError::Outdated, 1),
-            (AcquireError::Other, 0),
+            (AcquireError::Other("x".into()), 0),
         ] {
             let mut sc = Fake {
                 next: vec![Err(err)],
                 ..Default::default()
             };
             let mut sig = Signals::default();
-            let Decision::Draw(token) = Decision::after_phases(None) else {
-                unreachable!()
-            };
+            let mut failures = 0;
             assert!(matches!(
-                acquire_for_draw(token, &mut sc, &mut sig),
+                acquire_for_draw(token(), &mut sc, &mut sig, &mut failures),
                 Acquired::Retry
             ));
             assert_eq!(sc.reconfigured, reconfigures);
-            assert_eq!((sig.dirty, sig.redraws), (1, 1));
+            assert_eq!((sig.dirty, sig.delays.len(), failures), (1, 1, 1));
         }
+    }
+
+    #[test]
+    fn a_persistent_error_backs_off_and_a_success_resets() {
+        let mut sc = Fake {
+            next: (0..8)
+                .map(|_| Err(AcquireError::Lost))
+                .chain([Ok(1), Err(AcquireError::Lost)])
+                .collect(),
+            ..Default::default()
+        };
+        let mut sig = Signals::default();
+        let mut failures = 0;
+        for _ in 0..8 {
+            acquire_for_draw(token(), &mut sc, &mut sig, &mut failures);
+        }
+        let ms: Vec<u128> = sig.delays.iter().map(|d| d.as_millis()).collect();
+        assert_eq!(ms, [16, 32, 64, 128, 250, 250, 250, 250]);
+        assert!(matches!(
+            acquire_for_draw(token(), &mut sc, &mut sig, &mut failures),
+            Acquired::Image(1)
+        ));
+        assert_eq!(failures, 0);
+        acquire_for_draw(token(), &mut sc, &mut sig, &mut failures);
+        assert_eq!(sig.delays.last().unwrap().as_millis(), 16);
     }
 
     #[test]
@@ -237,13 +297,11 @@ mod tests {
             ..Default::default()
         };
         let mut sig = Signals::default();
-        let Decision::Draw(token) = Decision::after_phases(None) else {
-            unreachable!()
-        };
+        let mut failures = 0;
         assert!(matches!(
-            acquire_for_draw(token, &mut sc, &mut sig),
+            acquire_for_draw(token(), &mut sc, &mut sig, &mut failures),
             Acquired::Exit
         ));
-        assert_eq!(sig.redraws, 0);
+        assert!(sig.delays.is_empty());
     }
 }

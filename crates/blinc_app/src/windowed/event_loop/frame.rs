@@ -113,15 +113,9 @@ where
                     let mut did_rebuild = false;
                     let mut dirty_spring_count = 0usize;
 
-                    // Bind the surface handle up front: the
-                    // (feature-gated) frame-gate stall recovery below may
-                    // reconfigure it, and the frame acquire further down
-                    // uses it. Binding here keeps `surf` in scope for both
-                    // regardless of which Wayland features are enabled.
-                    let surf = match ws.surface.as_ref() {
-                        Some(s) => s,
-                        None => return ControlFlow::Continue,
-                    };
+                    if ws.surface.is_none() {
+                        return ControlFlow::Continue;
+                    }
 
                     #[cfg(all(feature = "wayland-frame-gate", target_os = "linux"))]
                     let mut gate_stalled = false;
@@ -314,11 +308,15 @@ where
                         config,
                     };
                     let mut signals = acquire::WindowSignals {
-                        window,
+                        wake: wake_proxy_for_pacing,
                         dirty: frame_dirty,
                     };
-                    let frame = match acquire::acquire_for_draw(token, &mut swapchain, &mut signals)
-                    {
+                    let frame = match acquire::acquire_for_draw(
+                        token,
+                        &mut swapchain,
+                        &mut signals,
+                        &mut ws.acquire_failures,
+                    ) {
                         acquire::Acquired::Image(f) => f,
                         acquire::Acquired::Retry => return ControlFlow::Continue,
                         acquire::Acquired::Exit => {

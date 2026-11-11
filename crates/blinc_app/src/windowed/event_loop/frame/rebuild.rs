@@ -1048,6 +1048,22 @@ mod tests {
         );
     }
 
+    /// The restyle is what brings the class background back to a node whose props the update
+    /// replaced; this test fails without it.
+    #[test]
+    fn class_background_survives_an_update_that_replaces_the_node() {
+        let mut tree = RenderTree::from_element(&ui_with_panel_width(200.0));
+        tree.set_stylesheet(Stylesheet::parse(CSS).expect("css"));
+        tree.apply_all_stylesheet_styles();
+        tree.compute_layout(400.0, 200.0);
+
+        let result = tree.incremental_update(&ui_with_panel_width(220.0));
+        assert_ne!(result, UpdateResult::NoChanges);
+        restyle_after_incremental_update(&mut tree, result, None);
+
+        assert!(panel_is_red(&tree));
+    }
+
     /// A panel whose own props change: its class background must come back with the restyle.
     fn ui_with_panel_width(panel_width: f32) -> Div {
         div()

@@ -108,6 +108,8 @@ pub(crate) struct WindowState {
     /// Keep presenting at vsync while the scene is static. Off by default;
     /// on only for a Wayland backend with `BLINC_KEEP_ALIVE=1`, decided at surface creation.
     pub wayland_keep_alive: bool,
+    /// Consecutive failed swapchain acquires; drives the retry delay.
+    pub acquire_failures: u32,
     /// Whether any CSS animation/transition was active last frame.
     /// Falling edge triggers a one-shot render-cache invalidation so
     /// composite-promoted subtrees demote and re-emit at their exact
@@ -156,6 +158,7 @@ impl WindowState {
             wayland_gate: None,
             #[cfg(target_os = "linux")]
             wayland_keep_alive: false,
+            acquire_failures: 0,
             prev_css_active: false,
             parked_at: None,
         }
