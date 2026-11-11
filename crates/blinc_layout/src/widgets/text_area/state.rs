@@ -87,6 +87,8 @@ pub struct TextAreaState {
     /// Computed visual lines (recomputed when text or width changes)
     /// Each VisualLine represents one rendered row of text
     pub(crate) visual_lines: Vec<VisualLine>,
+    /// Owner of the signal below: it lives and dies with the state, not with a build.
+    pub(crate) signals: blinc_core::owner::DataSignals,
     /// Bumped whenever something the field shows changes; its content is
     /// bound to it. `None` until a `TextArea` is made over the state.
     pub(crate) revision: Option<blinc_core::reactive::Signal<u64>>,
@@ -134,6 +136,7 @@ impl std::fmt::Debug for TextAreaState {
 
 impl Default for TextAreaState {
     fn default() -> Self {
+        let signals = blinc_core::owner::DataSignals::default();
         Self {
             ime: Default::default(),
             lines: vec![String::new()],
@@ -155,7 +158,8 @@ impl Default for TextAreaState {
             available_width: 276.0,   // Default width minus padding/borders
             wrap_enabled: true,       // Default to wrapping (visual lines handle cursor tracking)
             visual_lines: Vec::new(), // Computed on first layout
-            revision: Some(blinc_core::reactive::signal(0u64)),
+            revision: Some(signals.signal(0u64)),
+            signals,
             node_id: None,
             config: None,
             laid_out: None,

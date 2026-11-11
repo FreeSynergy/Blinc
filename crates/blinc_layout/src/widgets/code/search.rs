@@ -306,8 +306,12 @@ pub(super) fn build_search_bar(
         .w_full()
         .text_size(small_font)
         .on_change({
-            let state = Arc::clone(shared_state);
+            // These callbacks are stored in the editor's own input data: hold the editor weakly.
+            let state = Arc::downgrade(shared_state);
             move |query| {
+                let Some(state) = state.upgrade() else {
+                    return;
+                };
                 if let Ok(mut d) = state.lock() {
                     d.apply_search_query(query.to_string());
                 }
@@ -315,8 +319,11 @@ pub(super) fn build_search_bar(
             }
         })
         .on_submit({
-            let state = Arc::clone(shared_state);
+            let state = Arc::downgrade(shared_state);
             move |shift| {
+                let Some(state) = state.upgrade() else {
+                    return;
+                };
                 if let Ok(mut d) = state.lock() {
                     if shift {
                         d.search_prev();
@@ -398,14 +405,16 @@ pub(super) fn build_search_bar(
                     notify_search(&state);
                 }
             };
-            let state_for_replace = Arc::clone(&state);
+            let state_for_replace = Arc::downgrade(&state);
             let replace_input = div().class("blinc-find-field").w(input_w).child(
                 text_input(&replace_state)
                     .class("blinc-find-input")
                     .w_full()
                     .text_size(small_font)
                     .on_change(move |text| {
-                        if let Ok(mut d) = state_for_replace.lock() {
+                        if let Some(state) = state_for_replace.upgrade()
+                            && let Ok(mut d) = state.lock()
+                        {
                             d.replace_text = text.to_string();
                         }
                     }),

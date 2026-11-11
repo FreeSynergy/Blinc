@@ -362,7 +362,8 @@ fn hex_field(c: &Controller) -> Div {
     });
     let edits = c.clone();
     let validate = c.clone();
-    let submit = data.clone();
+    // The callback is stored in the field's own data: hold it weakly.
+    let submit = std::sync::Arc::downgrade(&data);
     let input = text_input(&data)
         .class("cn-color-picker-hex")
         .class("tabindex=text")
@@ -372,6 +373,9 @@ fn hex_field(c: &Controller) -> Div {
         .class_when("cn-color-picker-hex--invalid", invalid)
         .on_change(move |text| invalid.set(validate.parse(text).is_none()))
         .on_submit(move |_| {
+            let Some(submit) = submit.upgrade() else {
+                return;
+            };
             if edits.disabled.now().unwrap_or(false) {
                 return;
             }
