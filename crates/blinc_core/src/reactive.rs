@@ -554,9 +554,6 @@ pub struct ReactiveGraph {
     /// at `end_effect` that something it read changed before it was
     /// subscribed. Emptied when the outermost scope closes.
     scope_writes: Vec<SignalId>,
-    /// Nodes removed by a dispose, kept until the caller has released the graph lock: dropping a
-    /// closure or a value can drop the last handle of something that disposes signals itself.
-    retired: RefCell<Vec<Box<dyn Any + Send>>>,
 }
 
 /// An open host effect scope.
@@ -587,7 +584,6 @@ impl ReactiveGraph {
             due_host_effects: Vec::new(),
             effect_scopes: Vec::new(),
             scope_writes: Vec::new(),
-            retired: RefCell::new(Vec::new()),
         }
     }
 
@@ -959,7 +955,6 @@ impl ReactiveGraph {
             for &dep_id in &node.dependencies {
                 self.retire_subscriber(dep_id);
             }
-            self.retire(node);
         }
     }
 
@@ -1207,9 +1202,7 @@ impl ReactiveGraph {
         let Some(node) = self.signals.borrow_mut().remove(id) else {
             return false;
         };
-        let subscribers = node.subscribers.clone();
-        self.retire(node);
-        for sub in subscribers {
+        for sub in node.subscribers {
             match sub {
                 SubscriberId::Derived(d) => {
                     if let Some(derived) = self.derived.borrow_mut().get_mut(d) {
@@ -1238,19 +1231,8 @@ impl ReactiveGraph {
         for &dep_id in &node.dependencies {
             self.retire_subscriber(dep_id);
         }
-        self.retire(node);
         self.derived_dirty_buffer.borrow_mut().retain(|d| *d != id);
         true
-    }
-
-    /// Keep a removed node until [`Self::take_retired`] hands it out to be dropped.
-    fn retire<N: Any + Send>(&self, node: N) {
-        self.retired.borrow_mut().push(Box::new(node));
-    }
-
-    /// What disposals removed since the last call. Drop it after the graph lock is released.
-    pub(crate) fn take_retired(&self) -> Vec<Box<dyn Any + Send>> {
-        std::mem::take(&mut *self.retired.borrow_mut())
     }
 
     // =========================================================================
@@ -1697,13 +1679,9 @@ pub fn take_due_host_effects() -> Vec<EffectId> {
 
 /// Dispose a host effect on the process-global graph.
 pub fn dispose_host_effect(effect: EffectId) {
-    let retired = {
-        let graph = global_graph();
-        let mut g = graph.lock().expect("reactive graph poisoned");
-        g.dispose_effect(Effect { id: effect });
-        g.take_retired()
-    };
-    drop(retired);
+    let graph = global_graph();
+    let mut g = graph.lock().expect("reactive graph poisoned");
+    g.dispose_effect(Effect { id: effect });
 }
 
 // =============================================================================
@@ -2268,6 +2246,31 @@ pub fn dispose_signal(id: SignalId) {
     dispose(Disposed::Signal(id));
 }
 
+/// Dispose signals now if the graph lock is free; false, with nothing done, when it is held
+/// (including by this thread) or a write is in flight. For a caller that may run while a closure
+/// the graph is disposing or replacing is being dropped.
+pub(crate) fn try_dispose_signals(ids: &[SignalId]) -> bool {
+    if is_in_flush() {
+        return false;
+    }
+    let removed: Vec<SignalId> = {
+        let graph = global_graph();
+        let Ok(mut g) = graph.try_lock() else {
+            return false;
+        };
+        ids.iter()
+            .copied()
+            .filter(|id| g.dispose_signal(*id))
+            .collect()
+    };
+    if let Some(notifier) = DISPOSE_NOTIFIER.get() {
+        for id in removed {
+            notifier(Disposed::Signal(id));
+        }
+    }
+    true
+}
+
 /// Remove a derived from the global graph, together with its property
 /// bindings. Deferred inside an effect or a computation, as
 /// [`dispose_signal`] is.
@@ -2280,17 +2283,14 @@ fn dispose(node: Disposed) {
         DEFERRED_WRITES.with(|q| q.borrow_mut().push_back(Box::new(move || dispose(node))));
         return;
     }
-    let (removed, retired) = {
+    let removed = {
         let graph = global_graph();
         let mut g = graph.lock().unwrap();
-        let removed = match node {
+        match node {
             Disposed::Signal(id) => g.dispose_signal(id),
             Disposed::Derived(id) => g.dispose_derived(id),
-        };
-        (removed, g.take_retired())
+        }
     };
-    // Dropped with the lock released: a dropped closure or value can dispose signals itself.
-    drop(retired);
     // Told after the graph lock is released: the binding registry is
     // locked before the graph on the notify path.
     if removed && let Some(notifier) = DISPOSE_NOTIFIER.get() {

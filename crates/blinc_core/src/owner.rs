@@ -123,6 +123,8 @@ impl Owner {
         for signal in owned.signals {
             dispose_signal(signal);
         }
+        // Closures dropped above may have held the last handle of some data.
+        dispose_pending();
         self.0.borrow_mut().disposed = true;
     }
 
@@ -161,6 +163,7 @@ impl BuildScope {
     /// Start a build: a new scope is current until the pass is handed back or dropped. The pass is
     /// a root scope, not a child of whatever is current.
     pub fn begin(&mut self) -> BuildPass {
+        dispose_pending();
         let owner = Owner::default();
         let enter = owner.enter();
         BuildPass { owner, enter }
@@ -216,12 +219,38 @@ impl DataSignals {
     }
 }
 
+/// Signals of dropped data that could not be disposed at once because the graph was locked, as
+/// when the drop was caused by the graph replacing or removing a value.
+static PENDING: std::sync::Mutex<Vec<SignalId>> = std::sync::Mutex::new(Vec::new());
+static HAS_PENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Dispose the signals of data dropped while the graph was locked. Run where a build starts or a
+/// scope is disposed, with no graph or binding lock held; does nothing when none are waiting.
+pub fn dispose_pending() {
+    use std::sync::atomic::Ordering;
+    if !HAS_PENDING.swap(false, Ordering::AcqRel) {
+        return;
+    }
+    let ids = std::mem::take(&mut *PENDING.lock().unwrap_or_else(|p| p.into_inner()));
+    release(ids);
+}
+
+fn release(ids: Vec<SignalId>) {
+    if ids.is_empty() || crate::reactive::try_dispose_signals(&ids) {
+        return;
+    }
+    PENDING
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .extend(ids);
+    HAS_PENDING.store(true, std::sync::atomic::Ordering::Release);
+}
+
 impl Drop for DataSignalIds {
     fn drop(&mut self) {
-        let ids = std::mem::take(&mut *self.0.lock().unwrap_or_else(|p| p.into_inner()));
-        for id in ids {
-            dispose_signal(id);
-        }
+        release(std::mem::take(
+            &mut *self.0.lock().unwrap_or_else(|p| p.into_inner()),
+        ));
     }
 }
 

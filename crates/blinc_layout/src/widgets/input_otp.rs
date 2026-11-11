@@ -90,6 +90,16 @@ pub fn show_value_in_slots(slots: &Arc<Vec<SharedTextInputData>>, value: Signal<
     });
 }
 
+/// The slots again, if all of them are still alive.
+fn upgrade_slots(
+    ring: &[std::sync::Weak<std::sync::Mutex<crate::widgets::text_input::TextInputData>>],
+) -> Option<Arc<Vec<SharedTextInputData>>> {
+    ring.iter()
+        .map(std::sync::Weak::upgrade)
+        .collect::<Option<Vec<_>>>()
+        .map(Arc::new)
+}
+
 /// Wire the auto-advance / backspace-rewind / paste-distribution FSM
 /// onto a single slot's `text_input` builder.
 ///
@@ -105,11 +115,18 @@ pub fn wire_otp_slot(
     on_complete: Option<crate::widgets::TextCallback>,
 ) -> TextInput {
     let length = slots.len();
+    // The callbacks live in the slots' own data: holding the slots strongly would make a cycle.
+    let ring: Arc<
+        Vec<std::sync::Weak<std::sync::Mutex<crate::widgets::text_input::TextInputData>>>,
+    > = Arc::new(slots.iter().map(Arc::downgrade).collect());
     let mut field = field.class("tabindex=text");
 
     {
-        let slots = slots.clone();
+        let ring = ring.clone();
         field = field.on_focus_request(move || {
+            let Some(slots) = upgrade_slots(&ring) else {
+                return false;
+            };
             if index >= slots.len() {
                 return false;
             }
@@ -138,11 +155,14 @@ pub fn wire_otp_slot(
     }
 
     {
-        let slots = slots.clone();
+        let ring = ring.clone();
         let value_state = value;
         let on_change = on_change.clone();
         let on_complete = on_complete.clone();
         field = field.on_change(move |text| {
+            let Some(slots) = upgrade_slots(&ring) else {
+                return;
+            };
             // `InputType::Integer` admits `-`; OTP numeric mode does not.
             if let Some(c) = text.chars().next()
                 && !filter_char(c, numeric_only)
@@ -180,10 +200,13 @@ pub fn wire_otp_slot(
     }
 
     if index > 0 {
-        let slots = slots.clone();
+        let ring = ring.clone();
         let value_state = value;
         let on_change = on_change.clone();
         field = field.on_backspace_empty(move || {
+            let Some(slots) = upgrade_slots(&ring) else {
+                return;
+            };
             if let Ok(mut prev) = slots[index - 1].lock() {
                 prev.value.clear();
                 prev.cursor = 0;
@@ -202,11 +225,14 @@ pub fn wire_otp_slot(
     }
 
     {
-        let slots = slots.clone();
+        let ring = ring.clone();
         let value_state = value;
         let on_change = on_change.clone();
         let on_complete = on_complete.clone();
         field = field.on_paste_override(move |clip| {
+            let Some(slots) = upgrade_slots(&ring) else {
+                return true;
+            };
             let chars: Vec<char> = clip
                 .chars()
                 .filter(|c| filter_char(*c, numeric_only))

@@ -113,3 +113,74 @@ fn an_effect_that_holds_the_last_clone_can_be_disposed() {
         assert_eq!(held.try_get(), None);
     });
 }
+
+#[test]
+fn a_write_that_replaces_the_last_clone_does_not_hang() {
+    let _g = serial();
+    no_hang(|| {
+        let data = DataSignals::default();
+        let held = data.signal(1_u64);
+        let s = signal(Some(data));
+        s.set(None);
+        blinc_core::owner::dispose_pending();
+        assert_eq!(held.try_get(), None);
+
+        let data = DataSignals::default();
+        let held = data.signal(1_u64);
+        let s = signal(Some(data));
+        s.update(|_| None);
+        blinc_core::owner::dispose_pending();
+        assert_eq!(held.try_get(), None);
+    });
+}
+
+#[test]
+fn a_state_write_that_replaces_the_last_clone_does_not_hang() {
+    let _g = serial();
+    no_hang(|| {
+        let data = DataSignals::default();
+        let held = data.signal(1_u64);
+        let s = global_graph().lock().unwrap().create_signal(Some(data));
+        let state = blinc_core::reactive::State::new(
+            s,
+            global_graph(),
+            blinc_core::reactive::global_dirty_flag(),
+        );
+        state.set(None);
+        blinc_core::owner::dispose_pending();
+        assert_eq!(held.try_get(), None);
+    });
+}
+
+#[test]
+fn a_recompute_that_replaces_the_last_clone_does_not_hang() {
+    let _g = serial();
+    no_hang(|| {
+        let dep = signal(0_u32);
+        let c = computed(move |g| {
+            let _ = g.get(dep);
+            DataSignals::default()
+        });
+        let first = c.try_get().unwrap();
+        let held = first.signal(1_u64);
+        drop(first);
+        dep.set(1);
+        let _ = c.try_get();
+        blinc_core::owner::dispose_pending();
+        assert_eq!(held.try_get(), None);
+    });
+}
+
+#[test]
+fn a_write_that_keeps_another_clone_disposes_nothing() {
+    let _g = serial();
+    no_hang(|| {
+        let data = DataSignals::default();
+        let held = data.signal(1_u64);
+        let s = signal(Some(data.clone()));
+        s.set(None);
+        assert_eq!(held.try_get(), Some(1));
+        drop(data);
+        assert_eq!(held.try_get(), None);
+    });
+}
