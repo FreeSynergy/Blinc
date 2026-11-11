@@ -200,6 +200,31 @@ impl Drop for BuildScope {
     }
 }
 
+/// Signals that belong to a value, not to the build that happens to create it. They are made
+/// outside any scope and disposed when the last clone of the value that holds this is dropped.
+#[derive(Clone, Default, Debug)]
+pub struct DataSignals(std::sync::Arc<DataSignalIds>);
+
+#[derive(Default, Debug)]
+struct DataSignalIds(std::sync::Mutex<Vec<SignalId>>);
+
+impl DataSignals {
+    pub fn signal<T: Send + 'static>(&self, initial: T) -> crate::reactive::Signal<T> {
+        let signal = Owner::detached(|| crate::reactive::signal(initial));
+        self.0.0.lock().unwrap().push(signal.id());
+        signal
+    }
+}
+
+impl Drop for DataSignalIds {
+    fn drop(&mut self) {
+        let ids = std::mem::take(&mut *self.0.lock().unwrap_or_else(|p| p.into_inner()));
+        for id in ids {
+            dispose_signal(id);
+        }
+    }
+}
+
 fn with_current(f: impl FnOnce(&mut Owned)) {
     CURRENT.with(|stack| {
         if let Some(top) = stack.borrow().last() {
@@ -232,6 +257,32 @@ mod tests {
 
     fn serial() -> std::sync::MutexGuard<'static, ()> {
         LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    #[test]
+    fn data_signals_outlive_the_build_and_go_with_the_data() {
+        let _g = serial();
+        let mut gone = Vec::new();
+        for _ in 0..1000 {
+            let build = Owner::new();
+            let data = DataSignals::default();
+            let made = build.run(|| data.signal(7_i32));
+            let copy = data.clone();
+            build.dispose();
+            assert_eq!(made.try_get(), Some(7), "the signal went with the build");
+            drop(data);
+            assert_eq!(
+                made.try_get(),
+                Some(7),
+                "a clone of the data still holds it"
+            );
+            drop(copy);
+            gone.push(made);
+        }
+        assert!(
+            gone.iter().all(|s| s.try_get().is_none()),
+            "a signal outlived the data that owns it"
+        );
     }
 
     #[test]

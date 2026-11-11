@@ -4,6 +4,7 @@ use super::*;
 
 impl TextInputData {
     pub fn new() -> Self {
+        let signals = blinc_core::owner::DataSignals::default();
         Self {
             ime: Default::default(),
             value: String::new(),
@@ -22,8 +23,9 @@ impl TextInputData {
             scroll_offset_x: 0.0,
             computed_width: None,
             layout_bounds_storage: Arc::new(Mutex::new(None)),
-            revision: Some(blinc_core::reactive::signal(0u64)),
-            focus_signal: Some(blinc_core::reactive::signal(false)),
+            revision: Some(signals.signal(0u64)),
+            focus_signal: Some(signals.signal(false)),
+            signals,
             mounted: false,
             node_id: None,
             on_change_callback: None,

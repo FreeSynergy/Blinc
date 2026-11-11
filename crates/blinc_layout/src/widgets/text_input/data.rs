@@ -86,7 +86,8 @@ pub struct TextInputData {
     /// Layout bounds storage - updated after each layout computation
     /// Used to get the actual computed width for proper scroll behavior
     pub layout_bounds_storage: crate::renderer::LayoutBoundsStorage,
-    /// Owned with the data so fresh widget builds keep their revision source.
+    /// Owner of the signals below: they live and die with the data, not with a build.
+    pub(crate) signals: blinc_core::owner::DataSignals,
     pub(crate) revision: Option<blinc_core::reactive::Signal<u64>>,
     pub(crate) focus_signal: Option<blinc_core::reactive::Signal<bool>>,
     pub(crate) mounted: bool,

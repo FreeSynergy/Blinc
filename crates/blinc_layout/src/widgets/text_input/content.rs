@@ -78,11 +78,12 @@ pub(super) fn caret_x(d: &mut TextInputData, cfg: &TextInputConfig) -> f32 {
 /// revision, and the `.blinc-input` rules do the rest. Every bound value reads
 /// the revision first, so a handler's bump brings them all up to date.
 pub(super) fn assemble(mut outer: Div, data: &SharedTextInputData, base: &TextInputConfig) -> Div {
-    use blinc_core::reactive::{ReactiveGraph, computed, signal};
+    use blinc_core::reactive::{ReactiveGraph, computed};
 
     let revision = {
         let mut d = data.lock().unwrap();
-        *d.revision.get_or_insert_with(|| signal(0u64))
+        let signals = d.signals.clone();
+        *d.revision.get_or_insert_with(|| signals.signal(0u64))
     };
     // What the field is built with: the config as the stylesheet has it for
     // the state the field starts in.
