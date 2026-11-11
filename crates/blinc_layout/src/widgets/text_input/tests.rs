@@ -327,6 +327,7 @@ fn the_signals_of_the_data_outlive_the_build_that_made_them() {
         drop(data);
         gone.push((revision, focus));
     }
+    blinc_core::owner::dispose_pending();
     assert!(
         gone.iter()
             .all(|(r, f)| r.try_get().is_none() && f.try_get().is_none()),
@@ -360,6 +361,23 @@ fn disposing_a_build_whose_effect_holds_the_data_does_not_hang() {
     });
     wait.recv_timeout(std::time::Duration::from_secs(10))
         .expect("disposing a build hung");
+}
+
+/// The last handle of the data falls while this thread holds the binding registry: telling the
+/// registry about the disposed signals must not wait for it.
+#[test]
+fn dropping_the_data_while_the_registry_is_held_does_not_hang() {
+    let (done, wait) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let data = Arc::new(Mutex::new(TextInputData::new()));
+        let revision = data.lock().unwrap().revision.unwrap();
+        crate::binding::with_registry(|_| drop(data));
+        blinc_core::owner::dispose_pending();
+        assert!(revision.try_get().is_none());
+        let _ = done.send(());
+    });
+    wait.recv_timeout(std::time::Duration::from_secs(10))
+        .expect("dropping the data hung");
 }
 
 /// The caret and the click-to-caret mapping use the letter spacing the text is drawn

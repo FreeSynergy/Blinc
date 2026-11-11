@@ -278,7 +278,8 @@ impl NumberInput {
         let min = b.config.min;
         let max = b.config.max;
         let precision = b.config.precision;
-        let data_for_change = b.config.data.clone();
+        // The callback is stored in the field's own data: hold it weakly.
+        let data_for_change = Arc::downgrade(&b.config.data);
         let on_change = b.config.on_change.clone();
 
         // Parse-and-clamp wired into the text_input's on_change. Fires
@@ -328,7 +329,8 @@ impl NumberInput {
                 // text_input's data is already in sync with what the
                 // user typed.
                 if (clamped - parsed).abs() > f64::EPSILON
-                    && let Ok(mut d) = data_for_change.lock()
+                    && let Some(data) = data_for_change.upgrade()
+                    && let Ok(mut d) = data.lock()
                 {
                     d.value = format_value(clamped, precision);
                     d.cursor = d.value.chars().count();

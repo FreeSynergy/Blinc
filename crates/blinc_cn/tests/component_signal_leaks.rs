@@ -114,6 +114,14 @@ fn color_picker_cycle() {
     });
 }
 
+/// The panel itself, with its hex field, built without a popover.
+#[test]
+fn color_picker_panel_cycle() {
+    cycle("color_picker_panel", None, || {
+        Box::new(blinc_cn::color_picker(signal(blinc_core::Color::WHITE)).inline())
+    });
+}
+
 #[test]
 fn number_input_cycle() {
     cycle("number_input", None, || {
@@ -160,17 +168,34 @@ fn data_only_cycle() {
 fn builder_without_tree() {
     guarded(|| {
         init();
-        let build = Owner::new();
-        build.run(|| {
-            for _ in 0..10 {
-                let data = blinc_layout::widgets::text_input::text_input_data();
-                let t = blinc_layout::widgets::text_input::text_input(&data);
-                drop(t);
-                drop(data);
+        let (done, wait) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let run = || {
+                let build = Owner::new();
+                build.run(|| {
+                    for _ in 0..10 {
+                        let data = blinc_layout::widgets::text_input::text_input_data();
+                        let t = blinc_layout::widgets::text_input::text_input(&data);
+                        drop(t);
+                        drop(data);
+                    }
+                });
+                build.dispose();
+            };
+            run();
+            let before = live();
+            for _ in 0..50 {
+                run();
             }
+            let _ = done.send((before, live()));
         });
-        build.dispose();
-        eprintln!("builder_without_tree: {:?}", live());
+        let (before, after) = wait
+            .recv_timeout(Duration::from_secs(60))
+            .expect("builder_without_tree: hung");
+        assert_eq!(
+            after, before,
+            "a builder without a tree left signals behind"
+        );
     })
 }
 

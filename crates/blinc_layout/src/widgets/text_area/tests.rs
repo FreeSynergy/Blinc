@@ -119,6 +119,7 @@ fn the_signal_of_the_state_outlives_the_build_that_made_it() {
         drop(state);
         gone.push(revision);
     }
+    blinc_core::owner::dispose_pending();
     assert!(
         gone.iter().all(|r| r.try_get().is_none()),
         "a signal outlived its state"

@@ -518,6 +518,7 @@ mod tests {
             drop(scroll_ref);
             gone.push(offset);
         }
+        blinc_core::owner::dispose_pending();
         assert!(
             gone.iter().all(|s| s.try_get().is_none()),
             "a signal outlived its ref"

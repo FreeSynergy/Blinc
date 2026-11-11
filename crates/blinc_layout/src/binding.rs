@@ -1195,17 +1195,41 @@ static REGISTRY: LazyLock<Mutex<HashMap<u64, PropertyBindingRegistry>>> = LazyLo
         with_registries(|registry| registry.fire_derived(id));
     });
     blinc_core::reactive::set_dispose_notifier(|disposed| {
-        with_registries(|registry| match disposed {
-            blinc_core::reactive::Disposed::Signal(id) => registry.unregister_signal(id),
-            blinc_core::reactive::Disposed::Derived(id) => registry.unregister_derived(id),
-        });
+        // Never wait for the registry here: the value that was dropped may have been released by
+        // code that holds it. What cannot be told now is told with the next access.
+        let Ok(mut all) = REGISTRY.try_lock() else {
+            DISPOSED_LATER.lock().unwrap().push(disposed);
+            return;
+        };
+        let removed = remove_retired(&mut all);
+        unregister_disposed(&mut all, disposed);
+        drop(all);
+        drop(removed);
     });
     Mutex::new(HashMap::new())
 });
 
+/// Disposals that arrived while the registry was locked.
+static DISPOSED_LATER: Mutex<Vec<blinc_core::reactive::Disposed>> = Mutex::new(Vec::new());
+
+fn unregister_disposed(
+    registries: &mut HashMap<u64, PropertyBindingRegistry>,
+    disposed: blinc_core::reactive::Disposed,
+) {
+    for registry in registries.values_mut() {
+        match disposed {
+            blinc_core::reactive::Disposed::Signal(id) => registry.unregister_signal(id),
+            blinc_core::reactive::Disposed::Derived(id) => registry.unregister_derived(id),
+        }
+    }
+}
+
 fn remove_retired(
     registries: &mut HashMap<u64, PropertyBindingRegistry>,
 ) -> Vec<PropertyBindingRegistry> {
+    for disposed in std::mem::take(&mut *DISPOSED_LATER.lock().unwrap()) {
+        unregister_disposed(registries, disposed);
+    }
     crate::tree::scope::take_retired()
         .into_iter()
         .filter_map(|scope| registries.remove(&scope))

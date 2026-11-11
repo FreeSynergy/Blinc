@@ -232,7 +232,10 @@ pub fn dispose_pending() {
         return;
     }
     let ids = std::mem::take(&mut *PENDING.lock().unwrap_or_else(|p| p.into_inner()));
-    release(ids);
+    // Called with no graph lock held, so waiting for it is safe here.
+    for id in ids {
+        dispose_signal(id);
+    }
 }
 
 fn release(ids: Vec<SignalId>) {

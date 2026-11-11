@@ -3147,20 +3147,45 @@ mod tests {
         THEME_INIT.call_once(blinc_theme::ThemeState::init_default);
     }
 
+    /// Once per process, also when tests run side by side.
+    fn init_context() {
+        static CONTEXT_INIT: Once = Once::new();
+        CONTEXT_INIT.call_once(|| {
+            if !blinc_core::BlincContextState::is_initialized() {
+                blinc_core::BlincContextState::init(
+                    blinc_core::reactive::global_graph(),
+                    Arc::new(Mutex::new(blinc_core::context_state::HookState::new())),
+                    Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                );
+            }
+        });
+    }
+
+    /// The callbacks of the find and replace fields are stored in the editor's own input data,
+    /// so they must not hold the editor: it goes when the bar and the last handle are dropped.
+    #[test]
+    fn the_search_bar_does_not_keep_the_editor_alive() {
+        use blinc_core::reactive::signal;
+        ensure_theme_initialized();
+        init_context();
+        let state = code_editor_state("one two");
+        let weak = Arc::downgrade(&state);
+        let build = blinc_core::owner::Owner::new();
+        let bar = build.run(|| build_search_bar(&state, "search-leak", signal(0u64)));
+        drop(bar);
+        build.dispose();
+        drop(state);
+        assert!(weak.upgrade().is_none(), "the search bar holds its editor");
+    }
+
     /// The search bar is built once: stepping through matches and opening
     /// the replace row patch it in place, with no subtree rebuilt.
     #[test]
     fn the_search_bar_follows_the_search_in_place() {
         use crate::renderer::{ElementType, RenderTree};
-        use blinc_core::reactive::{global_graph, signal};
+        use blinc_core::reactive::signal;
         ensure_theme_initialized();
-        if !blinc_core::BlincContextState::is_initialized() {
-            blinc_core::BlincContextState::init(
-                global_graph(),
-                Arc::new(Mutex::new(blinc_core::context_state::HookState::new())),
-                Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            );
-        }
+        init_context();
         let state = code_editor_state("one two one");
         let revision = signal(0u64);
         {
