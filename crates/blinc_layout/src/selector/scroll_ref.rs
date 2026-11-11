@@ -35,6 +35,8 @@ pub struct ScrollRefInner {
     /// The vertical offset as a signal, for content that follows the scroll
     /// (a virtual list's window); made by [`ScrollRef::watch_y`].
     watch_y: Option<blinc_core::reactive::Signal<f32>>,
+    /// Owner of `watch_y`: it lives and dies with the ref, not with a build.
+    signals: blinc_core::owner::DataSignals,
 }
 
 /// A pending scroll operation to be executed by the renderer
@@ -208,9 +210,8 @@ impl ScrollRef {
     /// `initial` until it first reports.
     pub fn watch_y(&self, initial: f32) -> blinc_core::reactive::Signal<f32> {
         let mut inner = self.inner.lock().unwrap();
-        *inner
-            .watch_y
-            .get_or_insert_with(|| blinc_core::reactive::signal(initial))
+        let signals = inner.signals.clone();
+        *inner.watch_y.get_or_insert_with(|| signals.signal(initial))
     }
 
     /// Take pending scroll command (called by renderer each frame)
@@ -503,6 +504,25 @@ pub fn use_scroll_ref_keyed<K: std::hash::Hash>(key: K) -> ScrollRef {
 mod tests {
     use super::*;
     use crate::selector::{ScrollBlock, ScrollInline};
+
+    /// The watched offset belongs to the ref: the build that asked for it can be disposed.
+    #[test]
+    fn the_watched_offset_outlives_the_build_that_asked_for_it() {
+        let mut gone = Vec::new();
+        for _ in 0..1000 {
+            let scroll_ref = ScrollRef::new();
+            let build = blinc_core::owner::Owner::new();
+            let offset = build.run(|| scroll_ref.watch_y(0.0));
+            build.dispose();
+            assert!(offset.try_get().is_some(), "the offset went with the build");
+            drop(scroll_ref);
+            gone.push(offset);
+        }
+        assert!(
+            gone.iter().all(|s| s.try_get().is_none()),
+            "a signal outlived its ref"
+        );
+    }
 
     #[test]
     fn test_scroll_ref_new() {
