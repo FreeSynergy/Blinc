@@ -524,6 +524,31 @@ mod tests {
         );
     }
 
+    /// A computed that holds the ref (a select or a wheel follows its offset) is dropped when the
+    /// build is disposed, with the graph locked; the offset's release must not lock it again.
+    #[test]
+    fn disposing_a_build_whose_computed_holds_the_ref_does_not_hang() {
+        let (done, wait) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let build = blinc_core::owner::Owner::new();
+            let offset = build.run(|| {
+                let scroll_ref = ScrollRef::new();
+                let offset = scroll_ref.watch_y(0.0);
+                let held = scroll_ref.clone();
+                let _ = blinc_core::reactive::computed(move |_| {
+                    let _keep = &held;
+                    0.0_f32
+                });
+                offset
+            });
+            build.dispose();
+            assert!(offset.try_get().is_none());
+            let _ = done.send(());
+        });
+        wait.recv_timeout(std::time::Duration::from_secs(10))
+            .expect("disposing a build hung");
+    }
+
     #[test]
     fn test_scroll_ref_new() {
         let scroll_ref = ScrollRef::new();

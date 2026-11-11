@@ -334,6 +334,34 @@ fn the_signals_of_the_data_outlive_the_build_that_made_them() {
     );
 }
 
+/// An effect or computed that holds the last handle of the data is dropped when the build is
+/// disposed, with the graph locked; releasing the data's signals then must not lock it again.
+#[test]
+fn disposing_a_build_whose_effect_holds_the_data_does_not_hang() {
+    let (done, wait) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let build = blinc_core::owner::Owner::new();
+        let revision = build.run(|| {
+            let data = Arc::new(Mutex::new(TextInputData::new()));
+            let revision = data.lock().unwrap().revision.unwrap();
+            let held = Arc::clone(&data);
+            let _ = blinc_core::reactive::effect(move |_| {
+                let _ = held.lock().map(|d| d.value.len());
+            });
+            let held = Arc::clone(&data);
+            let _ = blinc_core::reactive::computed(move |_| {
+                held.lock().map(|d| d.value.len()).unwrap_or(0)
+            });
+            revision
+        });
+        build.dispose();
+        assert!(revision.try_get().is_none());
+        let _ = done.send(());
+    });
+    wait.recv_timeout(std::time::Duration::from_secs(10))
+        .expect("disposing a build hung");
+}
+
 /// The caret and the click-to-caret mapping use the letter spacing the text is drawn
 /// with, taken from the field's CSS like the font size is.
 #[test]
